@@ -1,0 +1,100 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Profile {
+  id            String   @id // supabase auth user id
+  displayName   String?
+  visibility    String   @default("public") // public | friends | private
+  musicPrefs    Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Event {
+  id          String   @id @default(cuid())
+  ownerId     String
+  title       String
+  visibility  String   @default("public") // public | private
+  license     String   @default("open") // open | invited-only | geofenced
+  lat         Float?
+  lon         Float?
+  radiusM     Int?
+  startAt     DateTime?
+  endAt       DateTime?
+  createdAt   DateTime @default(now())
+  suggestions TrackSuggestion[]
+  invites     Invite[] @relation("EventInvites")
+}
+
+model TrackSuggestion {
+  id            String   @id @default(cuid())
+  eventId       String
+  event         Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  deezerTrackId String
+  title         String
+  artist        String
+  previewUrl    String?
+  coverUrl      String?
+  votesCount    Int      @default(0)
+  createdAt     DateTime @default(now())
+  votes         Vote[]
+  @@index([eventId, votesCount])
+}
+
+model Vote {
+  id           String   @id @default(cuid())
+  suggestionId String
+  suggestion   TrackSuggestion @relation(fields: [suggestionId], references: [id], onDelete: Cascade)
+  userId       String
+  createdAt    DateTime @default(now())
+  @@unique([suggestionId, userId])
+}
+
+model Playlist {
+  id         String   @id @default(cuid())
+  ownerId    String
+  title      String
+  visibility String   @default("public") // public | private
+  license    String   @default("open") // open | invited-only
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  tracks     PlaylistTrack[]
+  invites    Invite[] @relation("PlaylistInvites")
+}
+
+model PlaylistTrack {
+  id            String   @id @default(cuid())
+  playlistId    String
+  playlist      Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  deezerTrackId String
+  title         String
+  artist        String
+  previewUrl    String?
+  position      Int
+  @@index([playlistId, position])
+}
+
+model Invite {
+  id         String   @id @default(cuid())
+  userId     String
+  eventId    String?  @relation("EventInvites", fields: [eventId], references: [id], onDelete: Cascade)
+  playlistId String?  @relation("PlaylistInvites", fields: [playlistId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+}
+
+model ActionLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  platform   String?
+  device     String?
+  appVersion String?
+  createdAt  DateTime @default(now())
+  @@index([userId, createdAt])
+}
