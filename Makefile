@@ -1,4 +1,4 @@
-.PHONY: install dev test load swagger
+.PHONY: install dev test load swagger up down logs build
 
 install:
 	cd backend && npm install
@@ -15,3 +15,19 @@ swagger:
 
 load:
 	k6 run docs/k6-vote.js
+
+# ---- Docker: run the whole stack at once (db + backend + Flutter web) ----
+up:
+	docker compose up --build -d
+	@echo "web UI:  http://localhost:8080"
+	@echo "API:     http://localhost:3000/health"
+	@echo "Swagger: http://localhost:3000/api/docs"
+
+down:
+	docker compose down
+
+logs:
+	docker compose logs -f
+
+build:
+	docker compose build

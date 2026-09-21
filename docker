@@ -1,0 +1,82 @@
+# Runs the entire Music Room stack at once: Postgres + Fastify API + Flutter web.
+#   docker compose up --build
+# Then:  web UI  -> http://localhost:8080
+#        REST API -> http://localhost:3000/health
+#        Swagger  -> http://localhost:3000/api/docs
+#
+# Secrets: values fall back to local-only defaults. Put real secrets in a
+# local .env (git-ignored); .env.example documents the required keys.
+
+name: musicroom
+
+services:
+  # ---- PostgreSQL 16 (prod parity for Prisma; API dev uses in-memory store) ----
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-musicroom}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-musicroom}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [musicroom]
+
+  # ---- Backend API (Fastify + socket.io, built from root Dockerfile) ----
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # Consumed by Prisma in prod; kept as a real URL so schema/migrate work.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-musicroom}
+      DEEZER_API_BASE: ${DEEZER_API_BASE:-https://api.deezer.com}
+      JWT_SECRET: ${JWT_SECRET:-change-me-min-32-chars}
+      SUPABASE_URL: ${SUPABASE_URL:-http://localhost:8000}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-change-me}
+      SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-change-me}
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [musicroom]
+
+  # ---- Mobile client rendered as Flutter web (nginx), proxies API to backend ----
+  mobile-web:
+    build:
+      context: .
+      dockerfile: mobile/Dockerfile
+      args:
+        # Same-origin: nginx proxies /api to the backend service.
+        BACKEND_URL: ${FLUTTER_BACKEND_URL:-http://localhost:8080}
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [musicroom]
+
+volumes:
+  pgdata:
+
+networks:
+  musicroom:
+    driver: bridge

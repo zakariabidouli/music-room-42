@@ -23,6 +23,22 @@ npm run dev            # :3000, docs at http://localhost:3000/api/docs
 curl localhost:3000/health   # {"ok":true}
 ```
 
+## 3b. Run everything at once with Docker
+```sh
+# from repo root (requires Docker)
+cp .env.example .env    # optional: only overrides compose defaults
+make up                 # or: docker compose up --build -d
+# web UI  -> http://localhost:8080   (Flutter app, proxies /api to backend)
+# API     -> http://localhost:3000/health
+# Swagger -> http://localhost:3000/api/docs
+make logs               # follow logs
+make down               # stop + remove containers
+```
+Compose starts three services: `db` (Postgres 16), `backend` (Fastify image from
+root `Dockerfile`), `mobile-web` (Flutter web build from `mobile/Dockerfile`,
+served by nginx). The web bundle's backend URL is baked at build time via the
+`WEB_BACKEND_URL` build arg (default `http://localhost:8080`, same-origin).
+
 ## 4. Run tests / swagger / load
 ```sh
 cd backend

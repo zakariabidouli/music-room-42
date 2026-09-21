@@ -14,3 +14,8 @@ jobs:
       - run: npm run swagger
         working-directory: backend
       - run: git diff --exit-code docs/openapi.json
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose build

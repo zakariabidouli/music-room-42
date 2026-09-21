@@ -1,0 +1,17 @@
+# Never bake secrets or heavyweight local artifacts into the image
+.git
+.gitignore
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules
+**/dist
+backend/node_modules
+backend/dist
+mobile/.dart_tool
+mobile/build
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+**/*.log
+.DS_Store
+docs/LOAD_TEST.md
