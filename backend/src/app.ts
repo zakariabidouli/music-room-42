@@ -5,7 +5,7 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { Server } from 'socket.io';
 import { z } from 'zod';
-import { db, requireAuth, getUserId, isInvited, checkGeofence } from './lib.js';
+import { db, requireAuth, getUserId, getTier, isInvited, checkGeofence } from './lib.js';
 
 export function buildApp() {
   const app = Fastify({ logger: false });
@@ -153,6 +153,46 @@ export function buildApp() {
     const r = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=10`);
     const j = (await r.json()) as any;
     return (j.data ?? []).map((t: any) => ({ deezerTrackId: String(t.id), title: t.title, artist: t.artist?.name, previewUrl: t.preview, coverUrl: t.album?.cover_medium }));
+  });
+
+  // ---- Bonus VI.3 FREE-ONLY mock tiers (school project, no payments) ----
+  app.get('/api/v1/billing/me', async (req) => {
+    const uid = requireAuth(req);
+    return { tier: getTier(uid), note: 'school demo: free by default' };
+  });
+  app.post('/api/v1/billing/upgrade-mock', async (req) => {
+    const uid = requireAuth(req);
+    db.subs.set(uid, { tier: 'premium_mock' });
+    return { tier: 'premium_mock' };
+  });
+
+  // ---- Bonus VI.2 nearby (IoT/proximity, free) ----
+  app.get('/api/v1/events/nearby', async (req) => {
+    const q = (req.query as any) ?? {};
+    const lat = Number(q.lat);
+    const lon = Number(q.lon);
+    const radiusM = Number(q.radiusM ?? 1000);
+    const now = new Date();
+    return [...db.events.values()]
+      .filter((e) => e.visibility === 'public')
+      .filter((e) => {
+        if (e.lat == null) return false;
+        if (e.license === 'geofenced' && !checkGeofence(e, lat, lon, now)) return false;
+        const R = 6371000;
+        const dLat = ((lat - e.lat) * Math.PI) / 180;
+        const dLon = ((lon - (e.lon ?? lon)) * Math.PI) / 180;
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos((e.lat * Math.PI) / 180) * Math.cos((lat * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+        return 2 * R * Math.asin(Math.sqrt(a)) <= radiusM;
+      })
+      .map((e) => ({ id: e.id, title: e.title, lat: e.lat, lon: e.lon }));
+  });
+
+  // ---- Bonus VI.4 offline sync delta (free) ----
+  app.get('/api/v1/sync/delta', async (req) => {
+    requireAuth(req);
+    const since = new Date(((req.query as any)?.since as string) ?? '1970-01-01');
+    const playlists = [...db.playlists.values()].filter((p) => true);
+    return { since: since.toISOString(), playlists: playlists.map((p) => ({ id: p.id, version: p.version })), note: 'client: compare baseVersion, reload on mismatch (409 path)' };
   });
 
   app.setErrorHandler((err: any, _req, reply) => {

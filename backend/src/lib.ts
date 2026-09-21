@@ -27,7 +27,12 @@ export const db = {
   invites: [] as any[],
   logs: [] as any[],
   profiles: new Map<string, any>(),
+  subs: new Map<string, any>(), // userId -> { tier: 'free' | 'premium_mock' }
 };
+
+export function getTier(userId: string): string {
+  return db.subs.get(userId)?.tier ?? 'free'; // school project: always free by default
+}
 
 export function isInvited(userId: string, eventId?: string, playlistId?: string): boolean {
   return db.invites.some(
