@@ -81,7 +81,25 @@
         "summary": "Deezer proxy search?q="
       }
     },
+    "/api/v1/music/chart": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Top tracks (Deezer metadata only, cold-start default)"
+          }
+        },
+        "summary": "Deezer chart top tracks"
+      }
+    },
     "/api/v1/playlists": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "public + owned/invited private playlists"
+          }
+        },
+        "summary": "List playlists"
+      },
       "post": {
         "responses": {
           "200": {
@@ -188,6 +206,42 @@
             "description": "versions"
           }
         }
+      }
+    },
+    "/api/v1/events/{id}/invites": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "invited user ids"
+          }
+        },
+        "summary": "List event invites (owner only)"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "invite"
+          }
+        },
+        "summary": "Invite user to event (owner only)"
+      }
+    },
+    "/api/v1/playlists/{id}/invites": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "invited user ids"
+          }
+        },
+        "summary": "List playlist invites (owner only)"
+      },
+      "post": {
+        "responses": {
+          "200": {
+            "description": "invite"
+          }
+        },
+        "summary": "Invite user to playlist (owner only)"
       }
     }
   },

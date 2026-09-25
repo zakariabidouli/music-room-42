@@ -19,7 +19,7 @@ cd ..
 ## 3. Run backend
 ```sh
 cd backend
-npm run dev            # :3000, docs at http://localhost:3000/api/docs
+npm run dev            # :3000 locally (PORT in .env), docs at http://localhost:3000/api/docs
 curl localhost:3000/health   # {"ok":true}
 ```
 
@@ -28,25 +28,25 @@ curl localhost:3000/health   # {"ok":true}
 # from repo root (requires Docker)
 cp .env.example .env    # optional: only overrides compose defaults
 make up                 # or: docker compose up --build -d
-# web UI  -> http://localhost:8080   (Flutter app, proxies /api to backend)
-# API     -> http://localhost:3000/health
-# Swagger -> http://localhost:3000/api/docs
+# web UI  -> http://localhost:8081   (Flutter app, proxies /api to backend)
+# API     -> http://localhost:3001/health
+# Swagger -> http://localhost:3001/api/docs
 make logs               # follow logs
 make down               # stop + remove containers
 ```
 Compose starts three services: `db` (Postgres 16), `backend` (Fastify image from
 root `Dockerfile`), `mobile-web` (Flutter web build from `mobile/Dockerfile`,
 served by nginx). The web bundle's backend URL is baked at build time via the
-`WEB_BACKEND_URL` build arg (default `http://localhost:8080`, same-origin).
+`WEB_BACKEND_URL` build arg (default `http://localhost:8081`, same-origin).
 
 ## 4. Run tests / swagger / load
 ```sh
 cd backend
-npm test               # vitest: 5 mandatory + 3 bonus = 8 green
-npm run swagger        # regenerates docs/openapi.json (hand-completed to 15 paths)
+npm test               # vitest: 5 mandatory + 3 bonus + 4 reliability = 14 green
+npm run swagger        # regenerates docs/openapi.json (NOTE: codegen wipes hand docs — currently hand-extended to 19 paths)
 # k6 (install first: brew install k6 or npm i -g k6):
-k6 run -e BASE_URL=http://localhost:3000 ../docs/k6-vote.js
-k6 run -e BASE_URL=http://localhost:3000 ../docs/k6-playlist.js
+k6 run -e BASE_URL=http://localhost:3001 ../docs/k6-vote.js
+k6 run -e BASE_URL=http://localhost:3001 ../docs/k6-playlist.js
 ```
 
 ## 5. Mobile (Flutter, remote-control only)

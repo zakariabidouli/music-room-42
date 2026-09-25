@@ -19,9 +19,9 @@ load:
 # ---- Docker: run the whole stack at once (db + backend + Flutter web) ----
 up:
 	docker compose up --build -d
-	@echo "web UI:  http://localhost:8080"
-	@echo "API:     http://localhost:3000/health"
-	@echo "Swagger: http://localhost:3000/api/docs"
+	@echo "web UI:  http://localhost:8081"
+	@echo "API:     http://localhost:3001/health"
+	@echo "Swagger: http://localhost:3001/api/docs"
 
 down:
 	docker compose down

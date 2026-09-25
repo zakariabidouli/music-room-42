@@ -54,7 +54,7 @@ export function buildApp() {
   // ---- Events/Vote (V.2.1) ----
   app.post('/api/v1/events', async (req) => {
     const uid = requireAuth(req);
-    const body = z.object({ title: z.string(), visibility: z.enum(['public', 'private']).default('public'), license: z.enum(['open', 'invited-only', 'geofenced']).default('open'), lat: z.number().optional(), lon: z.number().optional(), radiusM: z.number().optional(), startAt: z.string().optional(), endAt: z.string().optional() }).parse((req as any).body);
+    const body = z.object({ title: z.string().min(1), visibility: z.enum(['public', 'private']).default('public'), license: z.enum(['open', 'invited-only', 'geofenced']).default('open'), lat: z.number().optional(), lon: z.number().optional(), radiusM: z.number().optional(), startAt: z.string().optional(), endAt: z.string().optional() }).parse((req as any).body);
     const id = `ev_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const ev = { id, ownerId: uid, ...body };
     db.events.set(id, ev);
@@ -71,7 +71,7 @@ export function buildApp() {
     const ev = db.events.get((req.params as any).id);
     if (!ev) throw Object.assign(new Error('Not found'), { statusCode: 404 });
     if (ev.visibility === 'private' && ev.ownerId !== uid && !isInvited(uid, ev.id)) throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
-    const body = z.object({ deezerTrackId: z.string(), title: z.string(), artist: z.string(), previewUrl: z.string().optional(), coverUrl: z.string().optional() }).parse((req as any).body);
+    const body = z.object({ deezerTrackId: z.string().min(1), title: z.string().min(1), artist: z.string().min(1), previewUrl: z.string().optional(), coverUrl: z.string().optional() }).parse((req as any).body);
     const id = `sg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const sg = { id, eventId: ev.id, votesCount: 0, ...body };
     db.suggestions.set(id, sg);
@@ -81,6 +81,11 @@ export function buildApp() {
   app.get('/api/v1/events/:id/queue', async (req) => {
     const ev = db.events.get((req.params as any).id);
     if (!ev) throw Object.assign(new Error('Not found'), { statusCode: 404 });
+    if (ev.visibility === 'private') {
+      const uid = getUserId(req);
+      if (!uid || (ev.ownerId !== uid && !isInvited(uid, ev.id)))
+        throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
+    }
     return [...db.suggestions.values()].filter((s) => s.eventId === ev.id).sort((a, b) => b.votesCount - a.votesCount || a.id.localeCompare(b.id));
   });
   // Atomic vote: unique(user, suggestion) + recount inside single synchronous critical section (prod: Prisma $transaction)
@@ -103,28 +108,45 @@ export function buildApp() {
   // ---- Playlist editor (V.2.3) with version column ----
   app.post('/api/v1/playlists', async (req) => {
     const uid = requireAuth(req);
-    const body = z.object({ title: z.string(), visibility: z.enum(['public', 'private']).default('public'), license: z.enum(['open', 'invited-only']).default('open') }).parse((req as any).body);
+    const body = z.object({ title: z.string().min(1), visibility: z.enum(['public', 'private']).default('public'), license: z.enum(['open', 'invited-only']).default('open') }).parse((req as any).body);
     const id = `pl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const pl = { id, ownerId: uid, version: 1, ...body };
     db.playlists.set(id, pl);
     return pl;
   });
+  // List playlists: public + owned/invited private (mirrors GET /events filter).
+  app.get('/api/v1/playlists', async (req) => {
+    const uid = getUserId(req);
+    const all = [...db.playlists.values()];
+    const visible = all.filter(
+      (p) =>
+        p.visibility === 'public' ||
+        (uid && (p.ownerId === uid || isInvited(uid, undefined, p.id))),
+    );
+    return visible.map((p) => {
+      const count = [...db.tracks.values()].filter((t) => t.playlistId === p.id).length;
+      return { ...p, trackCount: count };
+    });
+  });
   app.post('/api/v1/playlists/:id/tracks', async (req) => {
     const uid = requireAuth(req);
     const pl = db.playlists.get((req.params as any).id);
     if (!pl) throw Object.assign(new Error('Not found'), { statusCode: 404 });
+    if (pl.visibility === 'private' && pl.ownerId !== uid && !isInvited(uid, undefined, pl.id)) throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
     if (pl.license === 'invited-only' && pl.ownerId !== uid && !isInvited(uid, undefined, pl.id)) throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
-    const body = z.object({ deezerTrackId: z.string(), title: z.string(), artist: z.string(), previewUrl: z.string().optional() }).parse((req as any).body);
+    const body = z.object({ deezerTrackId: z.string().min(1), title: z.string().min(1), artist: z.string().min(1), previewUrl: z.string().nullable().optional(), coverUrl: z.string().nullable().optional() }).parse((req as any).body);
     const existing = [...db.tracks.values()].filter((t) => t.playlistId === pl.id);
     const tr = { id: `tr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, playlistId: pl.id, position: existing.length, ...body };
     db.tracks.set(tr.id, tr);
     pl.version += 1;
+    (globalThis as any).__io?.to(`playlist:${pl.id}`).emit('playlist:updated', { playlistId: pl.id, version: pl.version });
     return tr;
   });
   app.patch('/api/v1/playlists/:id/reorder', async (req) => {
     const uid = requireAuth(req);
     const pl = db.playlists.get((req.params as any).id);
     if (!pl) throw Object.assign(new Error('Not found'), { statusCode: 404 });
+    if (pl.visibility === 'private' && pl.ownerId !== uid && !isInvited(uid, undefined, pl.id)) throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
     if (pl.license === 'invited-only' && pl.ownerId !== uid && !isInvited(uid, undefined, pl.id)) throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
     const body = z.object({ orderedIds: z.array(z.string()), version: z.number() }).parse((req as any).body);
     if (body.version !== pl.version) {
@@ -142,17 +164,65 @@ export function buildApp() {
   app.get('/api/v1/playlists/:id', async (req) => {
     const pl = db.playlists.get((req.params as any).id);
     if (!pl) throw Object.assign(new Error('Not found'), { statusCode: 404 });
+    if (pl.visibility === 'private') {
+      const uid = getUserId(req);
+      if (!uid || (pl.ownerId !== uid && !isInvited(uid, undefined, pl.id)))
+        throw Object.assign(new Error('Forbidden'), { statusCode: 403 });
+    }
     const tracks = [...db.tracks.values()].filter((t) => t.playlistId === pl.id).sort((a, b) => a.position - b.position);
     return { ...pl, tracks };
+  });
+
+  // ---- Invites (private events / invited-only licenses) ----
+  // Only the owner can invite; duplicates are idempotent.
+  app.post('/api/v1/events/:id/invites', async (req) => {
+    const uid = requireAuth(req);
+    const ev = db.events.get((req.params as any).id);
+    if (!ev) throw Object.assign(new Error('Not found'), { statusCode: 404 });
+    if (ev.ownerId !== uid) throw Object.assign(new Error('Forbidden: owner only'), { statusCode: 403 });
+    const body = z.object({ userId: z.string().min(1) }).parse((req as any).body);
+    if (!isInvited(body.userId, ev.id)) db.invites.push({ userId: body.userId, eventId: ev.id });
+    return { userId: body.userId, eventId: ev.id };
+  });
+  app.get('/api/v1/events/:id/invites', async (req) => {
+    const uid = requireAuth(req);
+    const ev = db.events.get((req.params as any).id);
+    if (!ev) throw Object.assign(new Error('Not found'), { statusCode: 404 });
+    if (ev.ownerId !== uid) throw Object.assign(new Error('Forbidden: owner only'), { statusCode: 403 });
+    return db.invites.filter((i: any) => i.eventId === ev.id).map((i: any) => i.userId);
+  });
+  app.post('/api/v1/playlists/:id/invites', async (req) => {
+    const uid = requireAuth(req);
+    const pl = db.playlists.get((req.params as any).id);
+    if (!pl) throw Object.assign(new Error('Not found'), { statusCode: 404 });
+    if (pl.ownerId !== uid) throw Object.assign(new Error('Forbidden: owner only'), { statusCode: 403 });
+    const body = z.object({ userId: z.string().min(1) }).parse((req as any).body);
+    if (!isInvited(body.userId, undefined, pl.id)) db.invites.push({ userId: body.userId, playlistId: pl.id });
+    return { userId: body.userId, playlistId: pl.id };
+  });
+  app.get('/api/v1/playlists/:id/invites', async (req) => {
+    const uid = requireAuth(req);
+    const pl = db.playlists.get((req.params as any).id);
+    if (!pl) throw Object.assign(new Error('Not found'), { statusCode: 404 });
+    if (pl.ownerId !== uid) throw Object.assign(new Error('Forbidden: owner only'), { statusCode: 403 });
+    return db.invites.filter((i: any) => i.playlistId === pl.id).map((i: any) => i.userId);
   });
 
   // ---- Deezer proxy (metadata only) ----
   app.get('/api/v1/music/search', async (req) => {
     const q = ((req.query as any)?.q ?? '') as string;
-    if (!q) throw Object.assign(new Error('Missing q'), { statusCode: 400 });
-    const r = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q)}&limit=10`);
+    if (!q.trim()) throw Object.assign(new Error('Missing q'), { statusCode: 400 });
+    const r = await fetch(`https://api.deezer.com/search?q=${encodeURIComponent(q.trim())}&limit=10`);
     const j = (await r.json()) as any;
     return (j.data ?? []).map((t: any) => ({ deezerTrackId: String(t.id), title: t.title, artist: t.artist?.name, previewUrl: t.preview, coverUrl: t.album?.cover_medium }));
+  });
+  // Cold-start discovery: top tracks so Home/search never opens blank.
+  // Same metadata-only shape as /music/search (Deezer does no voting/ranking).
+  app.get('/api/v1/music/chart', async () => {
+    const r = await fetch('https://api.deezer.com/chart/0/tracks?limit=20');
+    const j = (await r.json()) as any;
+    const list = (j.data ?? []) as any[];
+    return list.map((t: any) => ({ deezerTrackId: String(t.id), title: t.title, artist: t.artist?.name, previewUrl: t.preview, coverUrl: t.album?.cover_medium }));
   });
 
   // ---- Bonus VI.3 FREE-ONLY mock tiers (school project, no payments) ----
@@ -196,6 +266,10 @@ export function buildApp() {
   });
 
   app.setErrorHandler((err: any, _req, reply) => {
+    if (err?.name === 'ZodError' || err?.code === 'invalid_type') {
+      const issues = err.issues ?? err.message;
+      return reply.code(400).send({ error: { code: 400, message: 'Validation failed', issues } });
+    }
     const code = err.statusCode ?? 500;
     if (code === 409 && err.current) return reply.code(409).send({ error: { code: 409, message: err.message }, current: err.current, version: err.version });
     reply.code(code).send({ error: { code, message: err.message } });

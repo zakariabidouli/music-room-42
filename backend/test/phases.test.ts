@@ -58,8 +58,37 @@ describe('Phase 4: Playlist versioned reorder', () => {
   });
 });
 
-describe('Phase 5: ActionLog', () => {
-  it('every request logged with platform/device/version', async () => {
+describe('Invites: owner-only, unlocks invited-only vote/edit', () => {
+  it('event invite lets a stranger vote; non-owner cannot invite', async () => {
+    const app = buildApp();
+    const ev = (await app.inject({ method: 'POST', url: '/api/v1/events', headers: H('owner'), payload: { title: 'Secret', visibility: 'private', license: 'invited-only' } }).then(r => r.json()));
+    const sg = (await app.inject({ method: 'POST', url: `/api/v1/events/${ev.id}/suggest`, headers: H('owner'), payload: { deezerTrackId: '1', title: 'T', artist: 'A' } }).then(r => r.json()));
+    const before = await app.inject({ method: 'POST', url: `/api/v1/suggestions/${sg.id}/vote`, headers: H('guest') });
+    expect(before.statusCode).toBe(403);
+    const noPerm = await app.inject({ method: 'POST', url: `/api/v1/events/${ev.id}/invites`, headers: H('guest'), payload: { userId: 'guest' } });
+    expect(noPerm.statusCode).toBe(403);
+    const inv = await app.inject({ method: 'POST', url: `/api/v1/events/${ev.id}/invites`, headers: H('owner'), payload: { userId: 'guest' } });
+    expect(inv.statusCode).toBe(200);
+    const again = await app.inject({ method: 'POST', url: `/api/v1/events/${ev.id}/invites`, headers: H('owner'), payload: { userId: 'guest' } });
+    expect(again.statusCode).toBe(200);
+    const after = await app.inject({ method: 'POST', url: `/api/v1/suggestions/${sg.id}/vote`, headers: H('guest') });
+    expect(after.statusCode).toBe(200);
+    const list = (await app.inject({ method: 'GET', url: `/api/v1/events/${ev.id}/invites`, headers: H('owner') }).then(r => r.json()));
+    expect(list).toEqual(['guest']);
+  });
+
+  it('playlist invite lets a guest add tracks', async () => {
+    const app = buildApp();
+    const pl = (await app.inject({ method: 'POST', url: '/api/v1/playlists', headers: H('owner'), payload: { title: 'Crew', license: 'invited-only' } }).then(r => r.json()));
+    const denied = await app.inject({ method: 'POST', url: `/api/v1/playlists/${pl.id}/tracks`, headers: H('guest'), payload: { deezerTrackId: '1', title: 'A', artist: 'x' } });
+    expect(denied.statusCode).toBe(403);
+    await app.inject({ method: 'POST', url: `/api/v1/playlists/${pl.id}/invites`, headers: H('owner'), payload: { userId: 'guest' } });
+    const ok = await app.inject({ method: 'POST', url: `/api/v1/playlists/${pl.id}/tracks`, headers: H('guest'), payload: { deezerTrackId: '1', title: 'A', artist: 'x' } });
+    expect(ok.statusCode).toBe(200);
+  });
+});
+
+describe('Phase 5: ActionLog', () => {  it('every request logged with platform/device/version', async () => {
     const app = buildApp();
     const { db } = await import('../src/lib.js');
     db.logs.length = 0;

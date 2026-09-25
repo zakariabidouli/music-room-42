@@ -1,30 +1,150 @@
 import 'package:flutter/material.dart';
+
 import 'config.dart';
+import 'screens_auth.dart';
+import 'screens_more.dart';
+import 'screens_playlist.dart';
+import 'screens_vote.dart';
+import 'session.dart';
+import 'ui/shell.dart';
+import 'ui/theme.dart';
 
-void main() => runApp(const App());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await AppConfig.load();
+  final session = Session();
+  await session.load();
+  runApp(App(session: session));
+}
 
-// Bonus: responsive layout (VI.1 web), nearby banner (VI.2),
-// mock tier badge (VI.3 free-only), offline note (VI.4).
-class App extends StatelessWidget {
-  const App({super.key});
+class App extends StatefulWidget {
+  final Session session;
+
+  const App({required this.session, super.key});
+
+  @override
+  State<App> createState() => _AppState();
+}
+
+class _AppState extends State<App> {
+  int _selectedIndex = 0;
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Music Room',
-      home: Scaffold(
-        appBar: AppBar(title: const Text('Music Room (free school demo)')),
-        body: LayoutBuilder(builder: (ctx, c) {
-          final wide = c.maxWidth >= 1024;
-          final col = Column(children: const [
-            Text('Backend URL (configurable for tests)'),
-            Text('Tier: free (mock upgrade in Settings)'),
-            Text('Screens: Auth / Vote queue / Playlist editor / Nearby / Sync status.'),
-          ]);
-          if (wide) {
-            return Row(children: [Expanded(child: col), const Expanded(child: Text('Wide pane: queue + editor side by side'))]);
-          }
-          return Padding(padding: const EdgeInsets.all(16), child: col);
-        }),
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.light(),
+      darkTheme: AppTheme.dark(),
+      themeMode: ThemeMode.dark,
+      home: ListenableBuilder(
+        listenable: widget.session,
+        builder: (context, _) {
+          final labels = [
+            'Home',
+            'Playlists',
+            'Discover',
+            widget.session.isAuthed ? 'Account' : 'Sign in',
+            'Settings',
+          ];
+          final icons = [
+            Icons.home_outlined,
+            Icons.queue_music_outlined,
+            Icons.explore_outlined,
+            Icons.person_outline,
+            Icons.settings_outlined,
+          ];
+          final selectedIcons = [
+            Icons.home_rounded,
+            Icons.queue_music_rounded,
+            Icons.explore_rounded,
+            Icons.person_rounded,
+            Icons.settings_rounded,
+          ];
+          final pages = [
+            VoteScreen(widget.session),
+            PlaylistScreen(widget.session),
+            MoreScreen(widget.session),
+            AuthScreen(widget.session),
+            SettingsScreen(
+              widget.session,
+              onUrlChanged: () => setState(() {}),
+            ),
+          ];
+          final items = [
+            for (var index = 0; index < labels.length; index++)
+              AppNavigationItem(
+                label: labels[index],
+                icon: icons[index],
+                selectedIcon: selectedIcons[index],
+              ),
+          ];
+
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final useRail = constraints.maxWidth >= 700;
+              final useSidebar = constraints.maxWidth >= 1120;
+              final content = IndexedStack(
+                index: _selectedIndex,
+                children: pages,
+              );
+
+              Widget navigation;
+              if (useSidebar) {
+                navigation = AppSidebar(
+                  items: items,
+                  selectedIndex: _selectedIndex,
+                  onSelected: (index) =>
+                      setState(() => _selectedIndex = index),
+                );
+              } else if (useRail) {
+                navigation = AppNavigationRail(
+                  items: items,
+                  selectedIndex: _selectedIndex,
+                  onSelected: (index) =>
+                      setState(() => _selectedIndex = index),
+                );
+              } else {
+                navigation = NavigationBar(
+                  selectedIndex: _selectedIndex,
+                  onDestinationSelected: (index) =>
+                      setState(() => _selectedIndex = index),
+                  destinations: [
+                    for (var index = 0; index < items.length; index++)
+                      NavigationDestination(
+                        icon: Icon(items[index].icon),
+                        selectedIcon: Icon(items[index].selectedIcon),
+                        label: items[index].label,
+                      ),
+                  ],
+                );
+              }
+
+              return Scaffold(
+                body: SafeArea(
+                  top: false,
+                  child: Row(
+                    children: [
+                      if (useSidebar || useRail) navigation,
+                      if (useSidebar || useRail)
+                        const VerticalDivider(width: 1),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            Expanded(child: content),
+                            const MiniPlayer(),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                bottomNavigationBar:
+                    useSidebar || useRail ? null : navigation,
+              );
+            },
+          );
+        },
       ),
     );
   }

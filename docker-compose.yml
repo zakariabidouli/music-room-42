@@ -1,8 +1,8 @@
 # Runs the entire Music Room stack at once: Postgres + Fastify API + Flutter web.
 #   docker compose up --build
-# Then:  web UI  -> http://localhost:8080
-#        REST API -> http://localhost:3000/health
-#        Swagger  -> http://localhost:3000/api/docs
+# Then:  web UI  -> http://localhost:8081
+#        REST API -> http://localhost:3001/health
+#        Swagger  -> http://localhost:3001/api/docs
 #
 # Secrets: values fall back to local-only defaults. Put real secrets in a
 # local .env (git-ignored); .env.example documents the required keys.
@@ -21,7 +21,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-musicroom}"]
       interval: 5s
@@ -46,7 +46,7 @@ services:
       SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-change-me}
       SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-change-me}
     ports:
-      - "3000:3000"
+      - "3001:3000"
     depends_on:
       db:
         condition: service_healthy
@@ -66,10 +66,10 @@ services:
       args:
         # Same-origin: nginx proxies /api to the backend service.
         # Separate var from FLUTTER_BACKEND_URL (that one targets the Android emulator).
-        BACKEND_URL: ${WEB_BACKEND_URL:-http://localhost:8080}
+        BACKEND_URL: ${WEB_BACKEND_URL:-http://localhost:8081}
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "8081:80"
     depends_on:
       backend:
         condition: service_healthy
