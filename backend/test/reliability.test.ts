@@ -45,6 +45,22 @@ describe('Reliability: private visibility enforced on playlists + queue', () => 
   });
 });
 
+describe('Reliability: bodyless JSON POST never 400s (mobile vote fix)', () => {
+  it('vote with Content-Type json + empty body still votes (not 400)', async () => {
+    const app = buildApp();
+    const ev = (await app.inject({ method: 'POST', url: '/api/v1/events', headers: H('owner'), payload: { title: 'Party' } }).then(r => r.json()));
+    const sg = (await app.inject({ method: 'POST', url: `/api/v1/events/${ev.id}/suggest`, headers: H('owner'), payload: { deezerTrackId: '1', title: 'T', artist: 'A' } }).then(r => r.json()));
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/v1/suggestions/${sg.id}/vote`,
+      headers: { ...H('voter'), 'content-type': 'application/json' },
+      payload: '',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().votesCount).toBe(1);
+  });
+});
+
 describe('Reliability: chart proxy shape (mocked fetch)', () => {
   it('returns deezer metadata shape without doing vote work', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({

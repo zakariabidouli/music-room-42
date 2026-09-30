@@ -9,12 +9,14 @@ dev:
 
 test:
 	cd backend && npm test
+	if command -v flutter >/dev/null 2>&1; then cd mobile && flutter test; else echo "mobile: flutter SDK not installed — skipping (CI runs flutter test)"; fi
 
 swagger:
 	cd backend && npm run swagger
 
 load:
-	k6 run docs/k6-vote.js
+	k6 run -e BASE_URL=http://localhost:3001 docs/k6-vote.js
+	k6 run -e BASE_URL=http://localhost:3001 docs/k6-playlist.js
 
 # ---- Docker: run the whole stack at once (db + backend + Flutter web) ----
 up:
@@ -31,3 +33,8 @@ logs:
 
 build:
 	docker compose build
+
+re: 
+	docker compose down
+	docker compose build --no-cache
+	docker compose up -d

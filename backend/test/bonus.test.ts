@@ -22,9 +22,36 @@ describe('Bonus (free-only school demo)', () => {
     expect(far.length).toBe(0);
   });
 
-  it('VI.4 sync delta returns versions', async () => {
+  it('VI.4 sync delta returns versions + filters by since', async () => {
     const app = buildApp();
     const r = await app.inject({ method: 'GET', url: '/api/v1/sync/delta?since=2020-01-01T00:00:00.000Z', headers: H('u') }).then(x => x.json());
     expect(Array.isArray(r.playlists)).toBe(true);
+    const future = await app.inject({ method: 'GET', url: `/api/v1/sync/delta?since=${new Date(Date.now() + 3600e3).toISOString()}`, headers: H('u') }).then(x => x.json());
+    expect(future.playlists).toEqual([]);
+  });
+
+  it('V.1 auth helpers: link validates email, forgot always 200, me returns tier', async () => {
+    const app = buildApp();
+    const bad = await app.inject({ method: 'POST', url: '/api/v1/auth/link', headers: H('link1'), payload: { provider: 'google', email: 'not-an-email' } });
+    expect(bad.statusCode).toBe(400);
+    const ok = await app.inject({ method: 'POST', url: '/api/v1/auth/link', headers: H('link1'), payload: { provider: 'google', email: 'a@b.co' } }).then(r => r.json());
+    expect(ok.providers).toContain('google');
+    const forgot = await app.inject({ method: 'POST', url: '/api/v1/auth/forgot', payload: { email: 'a@b.co' } });
+    expect(forgot.statusCode).toBe(200);
+    const me = await app.inject({ method: 'GET', url: '/api/v1/auth/me', headers: H('link1') }).then(r => r.json());
+    expect(me.id).toBe('link1');
+  });
+
+  it('VI.3 free tier capped at 5 playlists, premium unlimited', async () => {
+    const app = buildApp();
+    for (let i = 0; i < 5; i++) {
+      const r = await app.inject({ method: 'POST', url: '/api/v1/playlists', headers: H('cap1'), payload: { title: `M${i}` } });
+      expect(r.statusCode).toBe(200);
+    }
+    const sixth = await app.inject({ method: 'POST', url: '/api/v1/playlists', headers: H('cap1'), payload: { title: 'M5' } });
+    expect(sixth.statusCode).toBe(402);
+    await app.inject({ method: 'POST', url: '/api/v1/billing/upgrade-mock', headers: H('cap1') });
+    const after = await app.inject({ method: 'POST', url: '/api/v1/playlists', headers: H('cap1'), payload: { title: 'M5' } });
+    expect(after.statusCode).toBe(200);
   });
 });

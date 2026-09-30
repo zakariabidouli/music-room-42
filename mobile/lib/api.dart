@@ -74,12 +74,16 @@ class Api {
 
   Future<dynamic> vote(String suggestionId,
       {double? lat, double? lon}) async {
+    // Always send '{}': Fastify 400s on `Content-Type: application/json` with an
+    // empty body (FST_ERR_CTP_EMPTY_JSON_BODY), which surfaced as
+    // "Check the entered details and try again."
     final r = await http.post(
         u('/api/v1/suggestions/$suggestionId/vote', {
           if (lat != null) 'lat': '$lat',
           if (lon != null) 'lon': '$lon',
         }),
-        headers: headers);
+        headers: headers,
+        body: '{}');
     return _decode(r);
   }
 

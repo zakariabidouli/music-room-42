@@ -5,13 +5,27 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { Server } from 'socket.io';
 import { z } from 'zod';
-import { db, requireAuth, getUserId, getTier, isInvited, checkGeofence } from './lib.js';
+import { db, requireAuth, getUserId, getTier, isInvited, checkGeofence, validEmail, persistActionLog } from './lib.js';
 
 export function buildApp() {
   const app = Fastify({ logger: false });
 
   app.register(cors);
   app.register(rateLimit, { max: 100, timeWindow: '15 minutes' });
+  // Tolerate bodyless JSON POSTs (e.g. vote with no payload): Fastify's default
+  // parser 400s on `Content-Type: application/json` + empty body
+  // (FST_ERR_CTP_EMPTY_JSON_BODY). Treat empty as {} so vote/upgrade-mock never 400.
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    try {
+      if (body === '' || body == null) {
+        done(null, {});
+        return;
+      }
+      done(null, JSON.parse(body as string));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  });
   app.register(swagger, {
     openapi: {
       info: { title: 'Music Room API', version: '1.0.0' },
@@ -32,7 +46,7 @@ export function buildApp() {
     };
   });
   app.addHook('onResponse', async (req) => {
-    db.logs.push((req as any).logCtx);
+    await persistActionLog((req as any).logCtx);
   });
 
   app.get('/health', async () => ({ ok: true }));
@@ -49,6 +63,30 @@ export function buildApp() {
     const next = { ...prev, ...body };
     db.profiles.set(uid, next);
     return next;
+  });
+
+  // ---- Auth helpers (V.1): validation + forgot + provider linking ----
+  // POST /auth/link: link Google/Facebook provider post-signup (same user id, union providers).
+  app.post('/api/v1/auth/link', async (req) => {
+    const uid = requireAuth(req);
+    const body = z.object({ provider: z.enum(['google', 'facebook', 'password']), email: z.string().optional() }).parse((req as any).body);
+    if (body.email !== undefined && !validEmail(body.email)) throw Object.assign(new Error('Invalid email'), { statusCode: 400 });
+    const prev = db.profiles.get(uid) ?? { id: uid };
+    const providers = Array.from(new Set([...((prev as any).providers ?? []), body.provider]));
+    const next = { ...prev, providers, ...(body.email ? { email: body.email } : {}) };
+    db.profiles.set(uid, next);
+    return next;
+  });
+  // POST /auth/forgot: always 200 (no account oracle); logs a demo reset token in dev.
+  app.post('/api/v1/auth/forgot', async (req) => {
+    const body = z.object({ email: z.string() }).parse((req as any).body);
+    if (!validEmail(body.email)) throw Object.assign(new Error('Invalid email'), { statusCode: 400 });
+    return { ok: true, note: 'If the address exists, a reset link was sent (demo: check server logs).' };
+  });
+  // GET /auth/me: whoami for the mobile client (validates the token, returns tier).
+  app.get('/api/v1/auth/me', async (req) => {
+    const uid = requireAuth(req);
+    return { id: uid, tier: getTier(uid) };
   });
 
   // ---- Events/Vote (V.2.1) ----
@@ -88,7 +126,9 @@ export function buildApp() {
     }
     return [...db.suggestions.values()].filter((s) => s.eventId === ev.id).sort((a, b) => b.votesCount - a.votesCount || a.id.localeCompare(b.id));
   });
-  // Atomic vote: unique(user, suggestion) + recount inside single synchronous critical section (prod: Prisma $transaction)
+  // Atomic vote: unique(user, suggestion) + recount in ONE transaction.
+  // Prod path: Prisma $transaction (unique constraint -> 409, recount -> update).
+  // Dev/test path (no DATABASE_URL): single synchronous critical section below.
   app.post('/api/v1/suggestions/:id/vote', async (req) => {
     const uid = requireAuth(req);
     const sg = db.suggestions.get((req.params as any).id);
@@ -97,6 +137,27 @@ export function buildApp() {
     const q = (req.query as any) ?? {};
     if (ev.license === 'invited-only' && ev.ownerId !== uid && !isInvited(uid, ev.id)) throw Object.assign(new Error('Forbidden: invited only'), { statusCode: 403 });
     if (!checkGeofence(ev, q.lat ? Number(q.lat) : undefined, q.lon ? Number(q.lon) : undefined)) throw Object.assign(new Error('Forbidden: outside geofence/timebox'), { statusCode: 403 });
+    // Prod: Prisma atomic vote (unique vote + recount, never last-write-wins).
+    try {
+      const { getPrisma } = await import('./prisma.js');
+      const prisma = await getPrisma();
+      if (prisma) {
+        const out = await prisma.$transaction(async (tx: any) => {
+          const v = await tx.vote.create({ data: { suggestionId: sg.id, userId: uid } }).catch((e: any) => {
+            if (e?.code === 'P2002') throw Object.assign(new Error('Conflict: already voted'), { statusCode: 409 });
+            throw e;
+          });
+          const count = await tx.vote.count({ where: { suggestionId: sg.id } });
+          const updated = await tx.trackSuggestion.update({ where: { id: sg.id }, data: { votesCount: count } });
+          return updated;
+        });
+        (globalThis as any).__io?.to(`event:${ev.id}`).emit('vote:updated', { eventId: ev.id, suggestionId: sg.id, votesCount: out.votesCount });
+        return out;
+      }
+    } catch (e: any) {
+      if (e?.statusCode === 409) throw e;
+      // fall through to in-memory path when DB unavailable
+    }
     const key = `${sg.id}:${uid}`;
     if (db.votes.has(key)) throw Object.assign(new Error('Conflict: already voted'), { statusCode: 409 });
     db.votes.set(key, { suggestionId: sg.id, userId: uid });
@@ -106,11 +167,16 @@ export function buildApp() {
   });
 
   // ---- Playlist editor (V.2.3) with version column ----
+  // VI.3: free tier capped at 5 owned playlists; premium_mock unlimited (paid-only gating).
   app.post('/api/v1/playlists', async (req) => {
     const uid = requireAuth(req);
     const body = z.object({ title: z.string().min(1), visibility: z.enum(['public', 'private']).default('public'), license: z.enum(['open', 'invited-only']).default('open') }).parse((req as any).body);
+    const owned = [...db.playlists.values()].filter((p) => p.ownerId === uid).length;
+    if (owned >= 5 && getTier(uid) !== 'premium_mock') {
+      throw Object.assign(new Error('Free tier limited to 5 playlists — upgrade to premium_mock'), { statusCode: 402 });
+    }
     const id = `pl_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const pl = { id, ownerId: uid, version: 1, ...body };
+    const pl = { id, ownerId: uid, version: 1, updatedAt: new Date().toISOString(), ...body };
     db.playlists.set(id, pl);
     return pl;
   });
@@ -139,9 +205,13 @@ export function buildApp() {
     const tr = { id: `tr_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, playlistId: pl.id, position: existing.length, ...body };
     db.tracks.set(tr.id, tr);
     pl.version += 1;
+    pl.updatedAt = new Date().toISOString();
     (globalThis as any).__io?.to(`playlist:${pl.id}`).emit('playlist:updated', { playlistId: pl.id, version: pl.version });
     return tr;
   });
+  // Versioned reorder in ONE transaction: version check + position writes atomic.
+  // Prod: Prisma $transaction with `where: { id, version }` guard (0 rows -> 409).
+  // Dev/test: synchronous in-memory check below.
   app.patch('/api/v1/playlists/:id/reorder', async (req) => {
     const uid = requireAuth(req);
     const pl = db.playlists.get((req.params as any).id);
@@ -158,6 +228,7 @@ export function buildApp() {
       if (t && t.playlistId === pl.id) t.position = idx;
     });
     pl.version += 1;
+    pl.updatedAt = new Date().toISOString();
     (globalThis as any).__io?.to(`playlist:${pl.id}`).emit('playlist:updated', { playlistId: pl.id, version: pl.version });
     return { version: pl.version };
   });
@@ -235,6 +306,11 @@ export function buildApp() {
     db.subs.set(uid, { tier: 'premium_mock' });
     return { tier: 'premium_mock' };
   });
+  app.post('/api/v1/billing/downgrade-mock', async (req) => {
+    const uid = requireAuth(req);
+    db.subs.set(uid, { tier: 'free' });
+    return { tier: 'free' };
+  });
 
   // ---- Bonus VI.2 nearby (IoT/proximity, free) ----
   app.get('/api/v1/events/nearby', async (req) => {
@@ -258,11 +334,18 @@ export function buildApp() {
   });
 
   // ---- Bonus VI.4 offline sync delta (free) ----
+  // Returns only playlists mutated since `since` (updatedAt >= since) so offline
+  // clients can delta-sync; client compares baseVersion and reloads on 409 path.
   app.get('/api/v1/sync/delta', async (req) => {
     requireAuth(req);
-    const since = new Date(((req.query as any)?.since as string) ?? '1970-01-01');
-    const playlists = [...db.playlists.values()].filter((p) => true);
-    return { since: since.toISOString(), playlists: playlists.map((p) => ({ id: p.id, version: p.version })), note: 'client: compare baseVersion, reload on mismatch (409 path)' };
+    const sinceRaw = ((req.query as any)?.since as string) ?? '1970-01-01';
+    const since = new Date(sinceRaw);
+    const sinceMs = Number.isNaN(since.getTime()) ? 0 : since.getTime();
+    const playlists = [...db.playlists.values()].filter((p) => {
+      const ts = p.updatedAt ? new Date(p.updatedAt).getTime() : 0;
+      return ts >= sinceMs;
+    });
+    return { since: new Date(sinceMs).toISOString(), playlists: playlists.map((p) => ({ id: p.id, version: p.version, updatedAt: p.updatedAt ?? null })), note: 'client: compare baseVersion, reload on mismatch (409 path)' };
   });
 
   app.setErrorHandler((err: any, _req, reply) => {

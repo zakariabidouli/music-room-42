@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "test": "vitest run",
-    "swagger": "tsx src/swagger-export.ts"
+    "swagger": "tsx src/swagger.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.1.0",

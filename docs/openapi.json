@@ -1,4 +1,9 @@
 {
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Music Room API",
+    "version": "1.0.0"
+  },
   "components": {
     "schemas": {},
     "securitySchemes": {
@@ -9,11 +14,6 @@
       }
     }
   },
-  "info": {
-    "title": "Music Room API",
-    "version": "1.0.0"
-  },
-  "openapi": "3.0.3",
   "paths": {
     "/api/v1/profile": {
       "get": {
@@ -148,11 +148,11 @@
           "200": {
             "description": "voted"
           },
-          "409": {
-            "description": "already voted"
-          },
           "403": {
             "description": "license/geofence denied"
+          },
+          "409": {
+            "description": "already voted"
           }
         },
         "summary": "Atomic vote"
@@ -242,6 +242,46 @@
           }
         },
         "summary": "Invite user to playlist (owner only)"
+      }
+    },
+    "/api/v1/auth/link": {
+      "post": {
+        "summary": "Link provider post-signup (V.1)",
+        "responses": {
+          "200": {
+            "description": "ok"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/forgot": {
+      "post": {
+        "summary": "Forgot password (V.1, always 200)",
+        "responses": {
+          "200": {
+            "description": "ok"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "summary": "Whoami + tier",
+        "responses": {
+          "200": {
+            "description": "ok"
+          }
+        }
+      }
+    },
+    "/api/v1/billing/downgrade-mock": {
+      "post": {
+        "summary": "Downgrade to free (VI.3 demo)",
+        "responses": {
+          "200": {
+            "description": "ok"
+          }
+        }
       }
     }
   },
